@@ -1,5 +1,5 @@
 test:
-	go test -cover
+	go test -cover ./...
 
 build:
 	go build
