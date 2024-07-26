@@ -29,10 +29,9 @@ var (
 	Magic     = [magicSize]byte{0xF9, 0xBE, 0xB4, 0xD9}
 	UserAgent = append([]byte{0x11}, []byte("/Santitham:0.0.1/")...)
 
-	ErrInvalidHeader     = errors.New("invalid header")
-	ErrUnknownCommand    = errors.New("unknown command")
-	ErrInvalidChecksum   = errors.New("invalid checksum")
-	ErrUnexpectedMessage = errors.New("received unexpected message")
+	ErrInvalidHeader   = errors.New("invalid header")
+	ErrUnknownCommand  = errors.New("unknown command")
+	ErrInvalidChecksum = errors.New("invalid checksum")
 )
 
 func (p Payload) Checksum() Checksum {
@@ -96,6 +95,10 @@ func (m *Message) Write(w io.Writer) error {
 	err := binary.Write(w, binary.LittleEndian, m.Header)
 	if err != nil {
 		return err
+	}
+
+	if m.Header.Size == 0 {
+		return nil
 	}
 
 	if written, err := w.Write(m.Payload); err != nil || written != len(m.Payload) {
