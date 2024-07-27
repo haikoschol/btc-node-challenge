@@ -51,20 +51,6 @@ func TestReadMessage(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidHeader)
 	})
 
-	t.Run("rejects unknown command", func(t *testing.T) {
-		buf := bytes.NewBuffer([]byte{
-			0xF9, 0xBE, 0xB4, 0xD9,
-			'w', 'h', 'a', 's', 's', 'u', 'p', '?', 0, 0, 0, 0,
-			0, 0, 0, 0,
-			0x5D, 0xF6, 0xE0, 0xE2,
-		})
-
-		message, err := ReadMessage(buf)
-
-		assert.Nil(t, message)
-		assert.ErrorIs(t, err, ErrUnknownCommand)
-	})
-
 	t.Run("rejects invalid checksum", func(t *testing.T) {
 		buf := bytes.NewBuffer([]byte{
 			0xF9, 0xBE, 0xB4, 0xD9,

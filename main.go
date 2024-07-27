@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	peerAddr := "14.6.5.33"
+	peerAddr := "159.223.20.99"
 	peerPort := 8333
 
 	peer := fmt.Sprintf("%s:%d", peerAddr, peerPort)
@@ -24,7 +24,15 @@ func main() {
 	err = network.Handshake(conn, peerAddr, peerPort)
 	if err != nil {
 		log.Fatal("handshake failed:", err)
-	} else {
-		log.Println("closing connection after successful handshake")
+	}
+
+	peers, err := network.FindPeers(conn)
+	if err != nil {
+		log.Fatal("finding peers failed: ", err)
+	}
+
+	log.Printf("found %d peers\n", len(peers))
+	for _, peer := range peers {
+		log.Println(peer.String())
 	}
 }

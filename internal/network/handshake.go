@@ -1,17 +1,16 @@
 package network
 
 import (
-	"errors"
 	"log"
 	"net"
 	"net/netip"
 )
 
-var ErrUnexpectedMessage = errors.New("received unexpected message")
+const protocolVersion = 70012
 
 func Handshake(conn net.Conn, peerAddr string, peerPort int) error {
 	versionMessage, err := NewVersionMessage(
-		int32(70014),
+		int32(protocolVersion),
 		None,
 		netip.MustParseAddr(peerAddr),
 		uint16(peerPort),
