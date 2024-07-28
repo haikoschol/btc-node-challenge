@@ -5,13 +5,14 @@ import (
 	"github.com/haikoschol/btc-node-challenge/internal/network"
 	"log"
 	"net"
+	"net/netip"
 )
 
 func main() {
-	peerAddr := "159.223.20.99"
+	peerAddr := netip.MustParseAddr("159.223.20.99")
 	peerPort := 8333
 
-	peer := fmt.Sprintf("%s:%d", peerAddr, peerPort)
+	peer := fmt.Sprintf("%s:%d", peerAddr.String(), peerPort)
 	log.Println("dialing", peer)
 
 	conn, err := net.Dial("tcp", peer)

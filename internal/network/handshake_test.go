@@ -11,6 +11,10 @@ import (
 )
 
 func TestHandshake(t *testing.T) {
+	// the address of the peer from the perspective of the Handshake function
+	// (i.e. the peer simulated by the tests below)
+	peerAddr := netip.MustParseAddr("127.0.0.1")
+
 	t.Run("initiates handshake by sending a version message", func(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -18,7 +22,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, "127.0.0.1", 8333)
+			err := Handshake(local, peerAddr, 8333)
 			assert.Error(t, err) // caused by the peer closing the connection
 		}()
 
@@ -39,7 +43,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, "127.0.0.1", 8333)
+			err := Handshake(local, peerAddr, 8333)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
 			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
 		}()
@@ -69,7 +73,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, "127.0.0.1", 8333)
+			err := Handshake(local, peerAddr, 8333)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
 			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
 		}()
@@ -92,7 +96,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, "127.0.0.1", 8333)
+			err := Handshake(local, peerAddr, 8333)
 			assert.NoError(t, err)
 		}()
 
