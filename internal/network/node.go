@@ -4,23 +4,39 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"net/netip"
+	"sync"
+	"time"
 )
 
+const maxPeerCount = 1000
+
 type Node struct {
+	OnDisconnect func()
 	addr         netip.Addr
 	port         uint16
 	conn         net.Conn
 	protoVersion int32
 	services     Services
+	lock         sync.Mutex
+	peersCh      chan []NetAddr
 }
 
 func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, error) {
 	peer := fmt.Sprintf("%s:%d", addr.String(), port)
+	network := "tcp"
 
-	conn, err := net.Dial("tcp", peer)
+	if addr.Is6() {
+		peer = fmt.Sprintf("[%s]:%d", addr.String(), port)
+		network = "tcp6"
+	}
+
+	var dialer net.Dialer
+	dialer.Timeout = time.Second * 15
+	conn, err := dialer.Dial(network, peer)
 	if err != nil {
 		return nil, err
 	}
@@ -45,41 +61,59 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 	}
 
 	return &Node{
-		addr,
-		port,
-		conn,
-		protoVersion,
-		services,
+		addr:         addr,
+		port:         port,
+		conn:         conn,
+		protoVersion: protoVersion,
+		services:     services,
+		lock:         sync.Mutex{},
+		peersCh:      nil,
 	}, nil
 }
 
 func (n *Node) Disconnect() {
+	if n.OnDisconnect != nil {
+		n.OnDisconnect()
+	}
 	n.conn.Close()
 }
 
-func (n *Node) FindPeers() ([]NetAddr, error) {
-	err := GetaddrMessage.Write(n.conn)
-	if err != nil {
-		return nil, err
-	}
+func (n *Node) Run() {
+	peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
 
-	var msg *Message
 	for {
-		msg, err = ReadMessage(n.conn)
+		msg, err := ReadMessage(n.conn)
 		if err != nil {
-			return nil, err
+			log.Printf("reading message from %s failed: %v. closing connection", peer, err)
+			n.Disconnect()
+			return
 		}
 
-		if msg.Header.Command == AddrCmd {
-			break
-		} else if msg.Header.Command == PingCmd {
+		if msg.Header.Command == PingCmd {
+			log.Printf("received ping from %s", peer)
 			msg.Header.Command = PongCmd
-			if err := msg.Write(n.conn); err != nil {
-				return nil, err
+
+			if err = msg.Write(n.conn); err != nil {
+				log.Printf("sending message to %s failed: %v. closing connection", peer, err)
+				n.Disconnect()
+				return
 			}
-		} else {
-			continue
+		} else if msg.Header.Command == AddrCmd {
+			if err = n.handleAddr(msg); err != nil {
+				log.Printf("processing addr message from %s failed: %v. closing connection", peer, err)
+				n.Disconnect()
+				return
+			}
 		}
+	}
+}
+
+func (n *Node) handleAddr(msg *Message) error {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	if n.peersCh == nil {
+		return nil
 	}
 
 	varIntSize := 1
@@ -101,14 +135,37 @@ func (n *Node) FindPeers() ([]NetAddr, error) {
 	addrPayloadSize := uint64(len(msg.Payload) - varIntSize)
 
 	if addrPayloadSize/netAddrSize != addrCount || addrPayloadSize%netAddrSize != 0 {
-		return nil, ErrCorruptPayload
+		return ErrCorruptPayload
 	}
 
 	buf := bytes.NewBuffer(msg.Payload[varIntSize:])
-	result := make([]NetAddr, addrCount)
+	peers := make([]NetAddr, addrCount)
 
-	for i := 0; i < int(addrCount); i++ {
-		result[i] = decodeNetAddr(buf)
+	for i := 0; i < min(int(addrCount), maxPeerCount); i++ {
+		peers[i] = decodeNetAddr(buf)
 	}
-	return result, nil
+
+	n.peersCh <- peers
+	close(n.peersCh)
+	n.peersCh = nil
+	return nil
+}
+
+func (n *Node) FindPeers(peersCh chan []NetAddr) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	if n.peersCh != nil {
+		close(n.peersCh)
+	}
+
+	err := GetaddrMessage.Write(n.conn)
+	if err != nil {
+		peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
+		log.Printf("sending message to %s failed: %v. closing connection", peer, err)
+		n.Disconnect()
+		close(peersCh)
+		return
+	}
+	n.peersCh = peersCh
 }
