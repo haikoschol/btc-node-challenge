@@ -1,59 +1,60 @@
 package network
 
 import (
-	"errors"
 	"log"
 	"net"
 	"net/netip"
 )
 
-var ErrUnexpectedMessage = errors.New("received unexpected message")
+const protocolVersion = 70012
 
-func Handshake(conn net.Conn, peerAddr string, peerPort int) error {
+func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices Services) (*Message, error) {
 	versionMessage, err := NewVersionMessage(
-		int32(70014),
-		None,
-		netip.MustParseAddr(peerAddr),
-		uint16(peerPort),
-		Network,
+		int32(protocolVersion),
+		connServices,
+		peerAddr,
+		peerPort,
+		connServices,
 		int32(0),
 		false,
 	)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	err = versionMessage.Write(conn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Println("sent:", versionMessage.Header.String())
 
 	message, err := ReadMessage(conn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Println("received:", message.Header.String())
 	if message.Header.Command != VersionCmd {
-		return ErrUnexpectedMessage
+		return nil, ErrUnexpectedMessage
 	}
+
+	peerVersionMsg := message
 
 	message, err = ReadMessage(conn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	log.Println("received:", message.Header.String())
 	if !message.Equal(VerackMessage) {
-		return ErrUnexpectedMessage
+		return nil, ErrUnexpectedMessage
 	}
 
 	err = VerackMessage.Write(conn)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	log.Println("sent:", VerackMessage.Header.String())
 
-	return nil
+	return peerVersionMsg, nil
 }

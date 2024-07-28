@@ -15,6 +15,11 @@ var (
 		Header:  NewHeader(VerackCmd, Payload{}),
 		Payload: Payload{},
 	}
+
+	GetaddrMessage = &Message{
+		Header:  NewHeader(GetaddrCmd, Payload{}),
+		Payload: Payload{},
+	}
 )
 
 const (
@@ -29,9 +34,12 @@ var (
 	Magic     = [magicSize]byte{0xF9, 0xBE, 0xB4, 0xD9}
 	UserAgent = append([]byte{0x11}, []byte("/Santitham:0.0.1/")...)
 
-	ErrInvalidHeader   = errors.New("invalid header")
-	ErrUnknownCommand  = errors.New("unknown command")
-	ErrInvalidChecksum = errors.New("invalid checksum")
+	ErrInvalidHeader       = errors.New("invalid header")
+	ErrInvalidChecksum     = errors.New("invalid checksum")
+	ErrUnexpectedMessage   = errors.New("received unexpected message")
+	ErrCorruptPayload      = errors.New("corrupt payload")
+	ErrInvalidPeerVersion  = errors.New("invalid peer version")
+	ErrServicesUnavailable = errors.New("requested services unavailable")
 )
 
 func (p Payload) Checksum() Checksum {
@@ -73,10 +81,6 @@ func ReadHeader(r io.Reader) (Header, error) {
 
 	if header.Magic != Magic {
 		return Header{}, ErrInvalidHeader
-	}
-
-	if header.Command != VersionCmd && header.Command != VerackCmd {
-		return Header{}, ErrUnknownCommand
 	}
 
 	return header, nil
