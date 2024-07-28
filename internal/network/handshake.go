@@ -8,12 +8,12 @@ import (
 
 const protocolVersion = 70012
 
-func Handshake(conn net.Conn, peerAddr netip.Addr, peerPort int, connServices Services) (*Message, error) {
+func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices Services) (*Message, error) {
 	versionMessage, err := NewVersionMessage(
 		int32(protocolVersion),
 		connServices,
 		peerAddr,
-		uint16(peerPort),
+		peerPort,
 		connServices,
 		int32(0),
 		false,

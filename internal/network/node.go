@@ -4,34 +4,68 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"math"
 	"net"
 	"net/netip"
 )
 
-const netAddrSize = 30
-
-type NetAddr struct {
-	Time     uint32
-	Services Services
-	IPAddr   [16]byte
-	Port     uint16
+type Node struct {
+	addr         netip.Addr
+	port         uint16
+	conn         net.Conn
+	protoVersion int32
+	services     Services
 }
 
-func (na *NetAddr) String() string {
-	addr := netip.AddrFrom16(na.IPAddr).String()
-	return fmt.Sprintf("address=%s port=%d timestamp=%d services=%d", addr, na.Port, na.Time, na.Services)
+func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, error) {
+	peer := fmt.Sprintf("%s:%d", addr.String(), port)
+
+	conn, err := net.Dial("tcp", peer)
+	if err != nil {
+		return nil, err
+	}
+
+	versionMsg, err := handshake(conn, addr, port, requestedServices)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	version := binary.LittleEndian.Uint32(versionMsg.Payload[:4])
+	if version > math.MaxInt32 {
+		conn.Close()
+		return nil, ErrInvalidPeerVersion
+	}
+	protoVersion := int32(version)
+
+	services := Services(binary.LittleEndian.Uint64(versionMsg.Payload[4:12]))
+	if services&requestedServices != requestedServices {
+		conn.Close()
+		return nil, ErrServicesUnavailable
+	}
+
+	return &Node{
+		addr,
+		port,
+		conn,
+		protoVersion,
+		services,
+	}, nil
 }
 
-func FindPeers(conn net.Conn) ([]NetAddr, error) {
-	err := GetaddrMessage.Write(conn)
+func (n *Node) Disconnect() {
+	n.conn.Close()
+}
+
+func (n *Node) FindPeers() ([]NetAddr, error) {
+	err := GetaddrMessage.Write(n.conn)
 	if err != nil {
 		return nil, err
 	}
 
 	var msg *Message
 	for {
-		msg, err = ReadMessage(conn)
+		msg, err = ReadMessage(n.conn)
 		if err != nil {
 			return nil, err
 		}
@@ -40,7 +74,7 @@ func FindPeers(conn net.Conn) ([]NetAddr, error) {
 			break
 		} else if msg.Header.Command == PingCmd {
 			msg.Header.Command = PongCmd
-			if err := msg.Write(conn); err != nil {
+			if err := msg.Write(n.conn); err != nil {
 				return nil, err
 			}
 		} else {
@@ -65,13 +99,10 @@ func FindPeers(conn net.Conn) ([]NetAddr, error) {
 	}
 
 	addrPayloadSize := uint64(len(msg.Payload) - varIntSize)
-	log.Println("addrPayloadSize", addrPayloadSize, "addrCount", addrCount)
 
 	if addrPayloadSize/netAddrSize != addrCount || addrPayloadSize%netAddrSize != 0 {
 		return nil, ErrCorruptPayload
 	}
-
-	log.Printf("reading %d addresses from %d bytes of payload\n", addrCount, len(msg.Payload))
 
 	buf := bytes.NewBuffer(msg.Payload[varIntSize:])
 	result := make([]NetAddr, addrCount)
@@ -80,21 +111,4 @@ func FindPeers(conn net.Conn) ([]NetAddr, error) {
 		result[i] = decodeNetAddr(buf)
 	}
 	return result, nil
-}
-
-func decodeNetAddr(buf *bytes.Buffer) NetAddr {
-	timestamp := binary.LittleEndian.Uint32(buf.Next(4))
-	services := Services(binary.LittleEndian.Uint64(buf.Next(8)))
-
-	var ipAddr [16]byte
-	copy(ipAddr[:], buf.Next(16))
-
-	port := binary.BigEndian.Uint16(buf.Next(2))
-
-	return NetAddr{
-		Time:     timestamp,
-		Services: services,
-		IPAddr:   ipAddr,
-		Port:     port,
-	}
 }

@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandshake(t *testing.T) {
-	// the address of the peer from the perspective of the Handshake function
+	// the address of the peer from the perspective of the handshake function
 	// (i.e. the peer simulated by the tests below)
 	peerAddr := netip.MustParseAddr("127.0.0.1")
 
@@ -22,7 +22,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			peerVersionMessage, err := Handshake(local, peerAddr, 8333, Network)
+			peerVersionMessage, err := handshake(local, peerAddr, 8333, Network)
 			assert.Error(t, err) // caused by the peer closing the connection
 			assert.Nil(t, peerVersionMessage)
 		}()
@@ -44,10 +44,10 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			peerVersionMessage, err := Handshake(local, peerAddr, 8333, Network)
+			peerVersionMessage, err := handshake(local, peerAddr, 8333, Network)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
 			assert.Nil(t, peerVersionMessage)
-			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
+			local.Close() // simulate the caller of handshake() handling the error by closing the connection
 		}()
 
 		_, err := readMsg(peer) // read their version message
@@ -75,10 +75,10 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			peerVersionMessage, err := Handshake(local, peerAddr, 8333, Network)
+			peerVersionMessage, err := handshake(local, peerAddr, 8333, Network)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
 			assert.Nil(t, peerVersionMessage)
-			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
+			local.Close() // simulate the caller of handshake() handling the error by closing the connection
 		}()
 
 		// read their version message
@@ -99,7 +99,7 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			peerVersionMessage, err := Handshake(local, peerAddr, 8333, Network)
+			peerVersionMessage, err := handshake(local, peerAddr, 8333, Network)
 			assert.NoError(t, err)
 			assert.True(t, peerVersionMessage.Equal(versionMessage))
 		}()

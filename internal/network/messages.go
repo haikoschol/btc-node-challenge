@@ -34,11 +34,12 @@ var (
 	Magic     = [magicSize]byte{0xF9, 0xBE, 0xB4, 0xD9}
 	UserAgent = append([]byte{0x11}, []byte("/Santitham:0.0.1/")...)
 
-	ErrInvalidHeader     = errors.New("invalid header")
-	ErrUnknownCommand    = errors.New("unknown command")
-	ErrInvalidChecksum   = errors.New("invalid checksum")
-	ErrUnexpectedMessage = errors.New("received unexpected message")
-	ErrCorruptPayload    = errors.New("corrupt payload")
+	ErrInvalidHeader       = errors.New("invalid header")
+	ErrInvalidChecksum     = errors.New("invalid checksum")
+	ErrUnexpectedMessage   = errors.New("received unexpected message")
+	ErrCorruptPayload      = errors.New("corrupt payload")
+	ErrInvalidPeerVersion  = errors.New("invalid peer version")
+	ErrServicesUnavailable = errors.New("requested services unavailable")
 )
 
 func (p Payload) Checksum() Checksum {

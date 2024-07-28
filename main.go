@@ -1,33 +1,23 @@
 package main
 
 import (
-	"fmt"
 	"github.com/haikoschol/btc-node-challenge/internal/network"
 	"log"
-	"net"
 	"net/netip"
 )
 
 func main() {
 	peerAddr := netip.MustParseAddr("159.223.20.99")
-	peerPort := 8333
+	peerPort := uint16(8333)
 
-	peer := fmt.Sprintf("%s:%d", peerAddr.String(), peerPort)
-	log.Println("dialing", peer)
-
-	conn, err := net.Dial("tcp", peer)
+	node, err := network.Connect(peerAddr, peerPort, network.Network)
 	if err != nil {
-		log.Fatal("dial failed:", err)
+		log.Fatalf("unable to connect to %s:%d: %v", peerAddr.String(), peerPort, err)
 	}
 
-	defer conn.Close()
+	defer node.Disconnect()
 
-	_, err = network.Handshake(conn, peerAddr, peerPort, network.Network)
-	if err != nil {
-		log.Fatal("handshake failed:", err)
-	}
-
-	peers, err := network.FindPeers(conn)
+	peers, err := node.FindPeers()
 	if err != nil {
 		log.Fatal("finding peers failed: ", err)
 	}
