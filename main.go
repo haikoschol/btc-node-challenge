@@ -22,7 +22,7 @@ func main() {
 
 	defer conn.Close()
 
-	_, err = network.Handshake(conn, peerAddr, peerPort)
+	_, err = network.Handshake(conn, peerAddr, peerPort, network.Network)
 	if err != nil {
 		log.Fatal("handshake failed:", err)
 	}
