@@ -22,8 +22,9 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, peerAddr, 8333)
+			peerVersionMessage, err := Handshake(local, peerAddr, 8333)
 			assert.Error(t, err) // caused by the peer closing the connection
+			assert.Nil(t, peerVersionMessage)
 		}()
 
 		msg, err := readMsg(peer)
@@ -43,8 +44,9 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, peerAddr, 8333)
+			peerVersionMessage, err := Handshake(local, peerAddr, 8333)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
+			assert.Nil(t, peerVersionMessage)
 			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
 		}()
 
@@ -73,8 +75,9 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, peerAddr, 8333)
+			peerVersionMessage, err := Handshake(local, peerAddr, 8333)
 			assert.ErrorIs(t, err, ErrUnexpectedMessage)
+			assert.Nil(t, peerVersionMessage)
 			local.Close() // simulate the caller of Handshake() handling the error by closing the connection
 		}()
 
@@ -96,8 +99,9 @@ func TestHandshake(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			err := Handshake(local, peerAddr, 8333)
+			peerVersionMessage, err := Handshake(local, peerAddr, 8333)
 			assert.NoError(t, err)
+			assert.True(t, peerVersionMessage.Equal(versionMessage))
 		}()
 
 		msg, err := readMsg(peer)
