@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/haikoschol/btc-node-challenge/internal/network"
 	"log"
 	"net/netip"
@@ -16,15 +17,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	peerAddr := netip.MustParseAddr("159.223.20.99")
+	peerAddr := netip.MustParseAddr("155.4.214.12")
 	peerPort := uint16(8333)
 
 	node, err := network.Connect(peerAddr, peerPort, network.Network)
 	if err != nil {
 		log.Fatalf("unable to connect to %s:%d: %v", peerAddr.String(), peerPort, err)
 	}
-
-	defer node.Disconnect()
 	go node.Run()
 
 	var peers []network.NetAddr
@@ -40,14 +39,27 @@ func main() {
 		log.Printf("found %d peers", len(peers))
 	}
 
-	go connectAtLeast(peers, 5)
+	nodes := mapset.NewSet[*network.Node]()
+	nodes.Add(node)
+
+	node.OnError = func(err error) {
+		log.Println(err)
+		nodes.Remove(node)
+	}
+
+	go connectAtLeast(peers, 5, nodes)
 
 	<-ctx.Done()
-	// TODO disconnect from all peers
 	log.Println("shutting down...")
+
+	// TODO call these in a goroutine and have a timeout after which os.Exit() is called
+	node.Disconnect()
+	for n := range nodes.Iter() {
+		n.Disconnect()
+	}
 }
 
-func connectAtLeast(peers []network.NetAddr, minConnections int32) {
+func connectAtLeast(peers []network.NetAddr, minConnections int32, nodes mapset.Set[*network.Node]) {
 	maxAge := time.Hour * 24 * 10
 	var connected int32
 	offset := 0
@@ -79,7 +91,13 @@ func connectAtLeast(peers []network.NetAddr, minConnections int32) {
 				}
 
 				atomic.AddInt32(&connected, 1)
-				n.OnDisconnect = func() { atomic.AddInt32(&connected, -1) }
+				nodes.Add(n)
+
+				n.OnError = func(err error) {
+					log.Println(err)
+					atomic.AddInt32(&connected, -1)
+					nodes.Remove(n)
+				}
 				go n.Run()
 			}()
 		}

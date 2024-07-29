@@ -19,6 +19,8 @@ const maxPeerCount = 1000
 type Node struct {
 	// OnDisconnect is executed after the connection to the peer has been closed by calling Disconnect.
 	OnDisconnect func()
+	// OnError is executed after the connection to the peer has been closed due to a network i/o or protocol error.
+	OnError      func(error)
 	addr         netip.Addr
 	port         uint16
 	conn         net.Conn
@@ -84,11 +86,7 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 // Disconnect closes the connection to the host and runs the OnDisconnect handler, if it has been set.
 // The Node instance should be discarded after calling Disconnect.
 func (n *Node) Disconnect() {
-	n.stopWritesCh <- true
-	n.conn.Close()
-	if n.OnDisconnect != nil {
-		n.OnDisconnect()
-	}
+	n.disconnect(nil)
 }
 
 // Run starts processing messages from the host. It blocks until the connection has been closed, either due to an error
@@ -99,8 +97,7 @@ func (n *Node) Run() {
 	for {
 		msg, err := ReadMessage(n.conn)
 		if err != nil {
-			log.Printf("reading message from %s failed: %v. closing connection", n.peer(), err)
-			n.Disconnect()
+			n.disconnect(fmt.Errorf("closing connection to %s. reading message failed: %w", n.peer(), err))
 			return
 		}
 
@@ -135,8 +132,14 @@ func (n *Node) processWrites() {
 		select {
 		case msg := <-n.msgWriteCh:
 			if err := msg.Write(n.conn); err != nil {
-				log.Printf("sending '%s' message to %s failed: %v. closing connection", msg.Command(), n.peer(), err)
-				n.Disconnect()
+				n.disconnect(
+					fmt.Errorf(
+						"closing connection to %s. sending '%s' message failed: %w",
+						msg.Command(),
+						n.peer(),
+						err,
+					),
+				)
 				return
 			}
 		case <-n.stopWritesCh:
@@ -191,6 +194,18 @@ func (n *Node) handleAddr(msg *Message) {
 	close(n.peersCh)
 	n.peersCh = nil
 	return
+}
+
+func (n *Node) disconnect(err error) {
+	n.stopWritesCh <- true
+	n.conn.Close()
+	n.setPeersCh(nil)
+
+	if err != nil && n.OnError != nil {
+		n.OnError(err)
+	} else if n.OnDisconnect != nil {
+		n.OnDisconnect()
+	}
 }
 
 func (n *Node) peer() string {
