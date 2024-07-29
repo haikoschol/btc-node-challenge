@@ -14,7 +14,10 @@ import (
 
 const maxPeerCount = 1000
 
+// Node represents a node in the Bitcoin network.
+// Instances should be created with Connect().
 type Node struct {
+	// OnDisconnect is executed after the connection to the peer has been closed.
 	OnDisconnect func()
 	addr         netip.Addr
 	port         uint16
@@ -25,6 +28,9 @@ type Node struct {
 	peersCh      chan []NetAddr
 }
 
+// Connect establishes a TCP connection with the host at addr:port and performs a Bitcoin protocol handshake. The
+// requestedServices are passed to the host in the version message. If the version message response from the host does
+// not contain these services, the connection is aborted and the function returns ErrServicesUnavailable.
 func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, error) {
 	peer := fmt.Sprintf("%s:%d", addr.String(), port)
 	network := "tcp"
@@ -71,6 +77,8 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 	}, nil
 }
 
+// Disconnect closes the connection to the host and runs the OnDisconnect handler, if it has been set.
+// The Node instance should be discarded after calling Disconnect.
 func (n *Node) Disconnect() {
 	n.conn.Close()
 	if n.OnDisconnect != nil {
@@ -78,6 +86,8 @@ func (n *Node) Disconnect() {
 	}
 }
 
+// Run starts processing messages from the host. It blocks until the connection has been closed, either due to an error
+// during network i/o or by calling Disconnect.
 func (n *Node) Run() {
 	peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
 
@@ -106,6 +116,28 @@ func (n *Node) Run() {
 			}
 		}
 	}
+}
+
+// FindPeers requests addresses of peers from the host and sends the result over peersCh in one slice. Afterwards,
+// FindPeers closes the channel. If an error occurs during sending of the getaddr message, the connection to the host
+// is closed, OnDisconnect is called if set and peersCh is closed.
+func (n *Node) FindPeers(peersCh chan []NetAddr) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	if n.peersCh != nil {
+		close(n.peersCh)
+	}
+
+	err := GetaddrMessage.Write(n.conn)
+	if err != nil {
+		peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
+		log.Printf("sending message to %s failed: %v. closing connection", peer, err)
+		n.Disconnect()
+		close(peersCh)
+		return
+	}
+	n.peersCh = peersCh
 }
 
 func (n *Node) handleAddr(msg *Message) error {
@@ -149,23 +181,4 @@ func (n *Node) handleAddr(msg *Message) error {
 	close(n.peersCh)
 	n.peersCh = nil
 	return nil
-}
-
-func (n *Node) FindPeers(peersCh chan []NetAddr) {
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
-	if n.peersCh != nil {
-		close(n.peersCh)
-	}
-
-	err := GetaddrMessage.Write(n.conn)
-	if err != nil {
-		peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
-		log.Printf("sending message to %s failed: %v. closing connection", peer, err)
-		n.Disconnect()
-		close(peersCh)
-		return
-	}
-	n.peersCh = peersCh
 }
