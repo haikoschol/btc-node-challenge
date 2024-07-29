@@ -91,6 +91,10 @@ type Message struct {
 	Payload Payload
 }
 
+func (m *Message) Command() string {
+	return m.Header.Command.String()
+}
+
 func (m *Message) Equal(other *Message) bool {
 	return m.Header == other.Header && bytes.Equal(m.Payload, other.Payload)
 }

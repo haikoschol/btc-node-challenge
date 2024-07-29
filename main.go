@@ -37,7 +37,7 @@ func main() {
 		node.Disconnect()
 		return
 	case peers = <-peersCh:
-		log.Printf("found %d peers\n", len(peers))
+		log.Printf("found %d peers", len(peers))
 	}
 
 	go connectAtLeast(peers, 5)
@@ -70,7 +70,7 @@ func connectAtLeast(peers []network.NetAddr, minConnections int32) {
 					log.Println(addr.String(), "is more than ten days old, skipping")
 					return
 				}
-				log.Printf("connecting to %s:%d\n", addr.String(), peer.Port)
+				log.Printf("connecting to %s:%d", addr.String(), peer.Port)
 
 				n, err := network.Connect(addr, peer.Port, network.Network)
 				if err != nil {

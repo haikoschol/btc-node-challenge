@@ -15,9 +15,9 @@ import (
 const maxPeerCount = 1000
 
 // Node represents a node in the Bitcoin network.
-// Instances should be created with Connect().
+// Instances should be created with Connect.
 type Node struct {
-	// OnDisconnect is executed after the connection to the peer has been closed.
+	// OnDisconnect is executed after the connection to the peer has been closed by calling Disconnect.
 	OnDisconnect func()
 	addr         netip.Addr
 	port         uint16
@@ -26,6 +26,8 @@ type Node struct {
 	services     Services
 	lock         sync.Mutex
 	peersCh      chan []NetAddr
+	stopWritesCh chan bool
+	msgWriteCh   chan *Message
 }
 
 // Connect establishes a TCP connection with the host at addr:port and performs a Bitcoin protocol handshake. The
@@ -74,12 +76,15 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 		services:     services,
 		lock:         sync.Mutex{},
 		peersCh:      nil,
+		stopWritesCh: make(chan bool, 1),
+		msgWriteCh:   make(chan *Message, 5),
 	}, nil
 }
 
 // Disconnect closes the connection to the host and runs the OnDisconnect handler, if it has been set.
 // The Node instance should be discarded after calling Disconnect.
 func (n *Node) Disconnect() {
+	n.stopWritesCh <- true
 	n.conn.Close()
 	if n.OnDisconnect != nil {
 		n.OnDisconnect()
@@ -89,31 +94,23 @@ func (n *Node) Disconnect() {
 // Run starts processing messages from the host. It blocks until the connection has been closed, either due to an error
 // during network i/o or by calling Disconnect.
 func (n *Node) Run() {
-	peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
+	go n.processWrites()
 
 	for {
 		msg, err := ReadMessage(n.conn)
 		if err != nil {
-			log.Printf("reading message from %s failed: %v. closing connection", peer, err)
+			log.Printf("reading message from %s failed: %v. closing connection", n.peer(), err)
 			n.Disconnect()
 			return
 		}
 
-		if msg.Header.Command == PingCmd {
-			log.Printf("received ping from %s", peer)
+		switch msg.Header.Command {
+		case PingCmd:
+			log.Printf("received ping from %s", n.peer())
 			msg.Header.Command = PongCmd
-
-			if err = msg.Write(n.conn); err != nil {
-				log.Printf("sending message to %s failed: %v. closing connection", peer, err)
-				n.Disconnect()
-				return
-			}
-		} else if msg.Header.Command == AddrCmd {
-			if err = n.handleAddr(msg); err != nil {
-				log.Printf("processing addr message from %s failed: %v. closing connection", peer, err)
-				n.Disconnect()
-				return
-			}
+			n.write(msg)
+		case AddrCmd:
+			n.handleAddr(msg)
 		}
 	}
 }
@@ -129,23 +126,35 @@ func (n *Node) FindPeers(peersCh chan []NetAddr) {
 		close(n.peersCh)
 	}
 
-	err := GetaddrMessage.Write(n.conn)
-	if err != nil {
-		peer := fmt.Sprintf("%s:%d", n.addr.String(), n.port)
-		log.Printf("sending message to %s failed: %v. closing connection", peer, err)
-		n.Disconnect()
-		close(peersCh)
-		return
-	}
 	n.peersCh = peersCh
+	n.write(GetaddrMessage)
 }
 
-func (n *Node) handleAddr(msg *Message) error {
+func (n *Node) processWrites() {
+	for {
+		select {
+		case msg := <-n.msgWriteCh:
+			if err := msg.Write(n.conn); err != nil {
+				log.Printf("sending '%s' message to %s failed: %v. closing connection", msg.Command(), n.peer(), err)
+				n.Disconnect()
+				return
+			}
+		case <-n.stopWritesCh:
+			return
+		}
+	}
+}
+
+func (n *Node) write(msg *Message) {
+	n.msgWriteCh <- msg
+}
+
+func (n *Node) handleAddr(msg *Message) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
 	if n.peersCh == nil {
-		return nil
+		return
 	}
 
 	varIntSize := 1
@@ -167,7 +176,8 @@ func (n *Node) handleAddr(msg *Message) error {
 	addrPayloadSize := uint64(len(msg.Payload) - varIntSize)
 
 	if addrPayloadSize/netAddrSize != addrCount || addrPayloadSize%netAddrSize != 0 {
-		return ErrCorruptPayload
+		log.Printf("received corrupt '%s' payload from %s. ignoring message", msg.Command(), n.peer())
+		return
 	}
 
 	buf := bytes.NewBuffer(msg.Payload[varIntSize:])
@@ -180,5 +190,9 @@ func (n *Node) handleAddr(msg *Message) error {
 	n.peersCh <- peers
 	close(n.peersCh)
 	n.peersCh = nil
-	return nil
+	return
+}
+
+func (n *Node) peer() string {
+	return fmt.Sprintf("%s:%d", n.addr.String(), n.port)
 }
