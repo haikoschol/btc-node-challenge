@@ -116,14 +116,7 @@ func (n *Node) Run() {
 // FindPeers closes the channel. If an error occurs during sending of the getaddr message, the connection to the host
 // is closed, OnDisconnect is called if set and peersCh is closed.
 func (n *Node) FindPeers(peersCh chan []NetAddr) {
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
-	if n.peersCh != nil {
-		close(n.peersCh)
-	}
-
-	n.peersCh = peersCh
+	n.setPeersCh(peersCh)
 	n.write(GetaddrMessage)
 }
 
@@ -153,10 +146,7 @@ func (n *Node) write(msg *Message) {
 }
 
 func (n *Node) handleAddr(msg *Message) {
-	n.lock.Lock()
-	defer n.lock.Unlock()
-
-	if n.peersCh == nil {
+	if !n.hasPeersCh() {
 		return
 	}
 
@@ -191,8 +181,7 @@ func (n *Node) handleAddr(msg *Message) {
 	}
 
 	n.peersCh <- peers
-	close(n.peersCh)
-	n.peersCh = nil
+	n.setPeersCh(nil)
 	return
 }
 
@@ -206,6 +195,23 @@ func (n *Node) disconnect(err error) {
 	} else if n.OnDisconnect != nil {
 		n.OnDisconnect()
 	}
+}
+
+func (n *Node) setPeersCh(ch chan []NetAddr) {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	if n.peersCh != nil {
+		close(n.peersCh)
+
+	}
+	n.peersCh = ch
+}
+
+func (n *Node) hasPeersCh() bool {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+	return n.peersCh != nil
 }
 
 func (n *Node) peer() string {
