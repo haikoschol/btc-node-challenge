@@ -72,10 +72,10 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 }
 
 func (n *Node) Disconnect() {
+	n.conn.Close()
 	if n.OnDisconnect != nil {
 		n.OnDisconnect()
 	}
-	n.conn.Close()
 }
 
 func (n *Node) Run() {
