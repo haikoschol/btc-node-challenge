@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type Node struct {
 	peersCh      chan []NetAddr
 	stopWritesCh chan bool
 	msgWriteCh   chan *Message
+	shuttingDown int32
 }
 
 // Connect establishes a TCP connection with the host at addr:port and performs a Bitcoin protocol handshake. The
@@ -80,6 +82,7 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 		peersCh:      nil,
 		stopWritesCh: make(chan bool, 1),
 		msgWriteCh:   make(chan *Message, 5),
+		shuttingDown: 0,
 	}, nil
 }
 
@@ -186,6 +189,11 @@ func (n *Node) handleAddr(msg *Message) {
 }
 
 func (n *Node) disconnect(err error) {
+	if n.isShuttingDown() {
+		return
+	}
+
+	atomic.AddInt32(&n.shuttingDown, 1)
 	n.stopWritesCh <- true
 	n.conn.Close()
 	n.setPeersCh(nil)
@@ -216,4 +224,8 @@ func (n *Node) hasPeersCh() bool {
 
 func (n *Node) peer() string {
 	return fmt.Sprintf("%s:%d", n.addr.String(), n.port)
+}
+
+func (n *Node) isShuttingDown() bool {
+	return n.shuttingDown > 0
 }
