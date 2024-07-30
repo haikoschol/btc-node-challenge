@@ -103,10 +103,10 @@ func (n *Node) Run() {
 			n.disconnect(fmt.Errorf("closing connection to %s. reading message failed: %w", n.peer(), err))
 			return
 		}
+		log.Printf("received [%s] from %s", msg.Header.String(), n.peer())
 
 		switch msg.Header.Command {
 		case PingCmd:
-			log.Printf("received ping from %s", n.peer())
 			msg.Header.Command = PongCmd
 			n.write(msg)
 		case AddrCmd:
@@ -138,6 +138,7 @@ func (n *Node) processWrites() {
 				)
 				return
 			}
+			log.Printf("sent [%s] to %s", msg.Header.String(), n.peer())
 		case <-n.stopWritesCh:
 			return
 		}

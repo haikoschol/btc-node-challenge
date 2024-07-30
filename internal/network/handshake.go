@@ -1,6 +1,7 @@
 package network
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/netip"
@@ -9,6 +10,8 @@ import (
 const protocolVersion = 70012
 
 func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices Services) (*Message, error) {
+	peer := fmt.Sprintf("%s:%d", peerAddr.String(), peerPort)
+
 	versionMessage, err := NewVersionMessage(
 		int32(protocolVersion),
 		connServices,
@@ -26,14 +29,14 @@ func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices
 	if err != nil {
 		return nil, err
 	}
-	log.Println("sent:", versionMessage.Header.String())
+	log.Printf("sent [%s] to %s", versionMessage.Header.String(), peer)
 
 	message, err := ReadMessage(conn)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Println("received:", message.Header.String())
+	log.Printf("received [%s] from %s", message.Header.String(), peer)
 	if message.Header.Command != VersionCmd {
 		return nil, ErrUnexpectedMessage
 	}
@@ -45,7 +48,7 @@ func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices
 		return nil, err
 	}
 
-	log.Println("received:", message.Header.String())
+	log.Printf("received [%s] from %s", message.Header.String(), peer)
 	if !message.Equal(VerackMessage) {
 		return nil, ErrUnexpectedMessage
 	}
@@ -54,7 +57,7 @@ func handshake(conn net.Conn, peerAddr netip.Addr, peerPort uint16, connServices
 	if err != nil {
 		return nil, err
 	}
-	log.Println("sent:", VerackMessage.Header.String())
+	log.Printf("sent [%s] to %s", VerackMessage.Header.String(), peer)
 
 	return peerVersionMsg, nil
 }
