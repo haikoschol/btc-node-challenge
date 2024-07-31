@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"time"
 )
 
 func main() {
@@ -24,9 +25,21 @@ func main() {
 	select {
 	case <-ctx.Done():
 		log.Println("shutting down...")
-		// TODO call this in a goroutine and have a timeout after which os.Exit() is called
-		pool.Shutdown()
+		shutdown(pool)
 	case err := <-pool.Error():
 		log.Fatal(err)
 	}
+}
+
+func shutdown(pool *network.NodePool) {
+	timer := time.NewTimer(time.Second * 10)
+	go func() {
+		pool.Shutdown()
+		timer.Stop()
+		os.Exit(0)
+	}()
+
+	<-timer.C
+	log.Println("shutdown timed out. aborting")
+	os.Exit(1)
 }
