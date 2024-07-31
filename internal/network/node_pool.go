@@ -5,6 +5,7 @@ import (
 	mapset "github.com/deckarep/golang-set/v2"
 	"log"
 	"net/netip"
+	"sync"
 	"time"
 )
 
@@ -104,41 +105,66 @@ func (p *NodePool) addConnections() {
 		return
 	}
 
-	log.Printf("connecting to more nodes... current: %d target: %d", before, p.minConnections)
+	log.Printf("trying to connect to more nodes... current: %d target: %d", before, p.minConnections)
 	log.Printf("got %d more peers to try", p.peerAddrs.Cardinality())
 
-	for p.Size() < p.minConnections && p.peerAddrs.Cardinality() > 0 {
-		if p.isShuttingDown() {
-			return
-		}
+	batch := p.getPeerBatch()
+	var wg sync.WaitGroup
+	wg.Add(len(batch))
 
+	for _, peer := range batch {
+		go func() {
+			defer wg.Done()
+
+			if p.isShuttingDown() {
+				return
+			}
+
+			n, err := p.connect(peer)
+			if err != nil {
+				return
+			}
+			go n.Run()
+		}()
+	}
+	wg.Wait()
+	log.Printf("connected to %d more nodes", p.Size()-before)
+}
+
+func (p *NodePool) connect(peer NetAddr) (*Node, error) {
+	addr := netip.AddrFrom16(peer.IPAddr).Unmap()
+	n, err := Connect(addr, peer.Port, Network)
+	if err != nil {
+		return nil, err
+	}
+
+	n.OnDisconnect = func() {
+		p.nodes.Remove(n)
+	}
+	n.OnError = func(err error) {
+		log.Println(err)
+		p.nodes.Remove(n)
+	}
+
+	p.nodes.Add(n)
+	return n, nil
+}
+
+func (p *NodePool) getPeerBatch() (batch []NetAddr) {
+	batchSize := p.minConnections * 2
+
+	for len(batch) < batchSize && p.peerAddrs.Cardinality() > 0 {
 		peer, ok := p.peerAddrs.Pop()
 		if !ok {
-			// TODO continously collect peers from addr from all connected nodes
 			return
 		}
 
 		if time.Since(time.Unix(int64(peer.Time), 0)) > maxPeerAge {
 			continue
 		}
-
-		addr := netip.AddrFrom16(peer.IPAddr).Unmap()
-		n, err := Connect(addr, peer.Port, Network)
-		if err != nil {
-			continue
-		}
-
-		n.OnDisconnect = func() {
-			p.nodes.Remove(n)
-		}
-		n.OnError = func(err error) {
-			log.Println(err)
-			p.nodes.Remove(n)
-		}
-		p.nodes.Add(n)
-		go n.Run()
+		batch = append(batch, peer)
 	}
-	log.Printf("connected to %d more nodes", p.Size()-before)
+	return
 }
 
 func (p *NodePool) isShuttingDown() bool {
