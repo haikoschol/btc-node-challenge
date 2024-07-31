@@ -94,7 +94,7 @@ func (p *NodePool) run() {
 			if lowOnConnections && !lowOnPeerAddrs {
 				log.Printf(
 					"trying to connect to more nodes. current: %d target: %d peer addresses left to try: %d",
-					p.peerAddrs.Cardinality(),
+					p.Size(),
 					p.minConnections,
 					p.peerAddrs.Cardinality(),
 				)
