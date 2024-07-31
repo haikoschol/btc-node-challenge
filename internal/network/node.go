@@ -115,9 +115,9 @@ func (n *Node) Run() {
 	}
 }
 
-// FindPeers requests addresses of peers from the host and sends the result over peersCh in one slice. Afterwards,
+// FindPeers requests addresses of peers from the host and sends the result over addrsCh in one slice. Afterwards,
 // FindPeers closes the channel. If an error occurs during sending of the getaddr message, the connection to the host
-// is closed, OnDisconnect is called if set and peersCh is closed.
+// is closed, OnDisconnect is called if set and addrsCh is closed.
 func (n *Node) FindPeers(peersCh chan []NetAddr) {
 	n.setPeersCh(peersCh)
 	n.write(GetaddrMessage)
@@ -209,11 +209,6 @@ func (n *Node) disconnect(err error) {
 func (n *Node) setPeersCh(ch chan []NetAddr) {
 	n.lock.Lock()
 	defer n.lock.Unlock()
-
-	if n.peersCh != nil {
-		close(n.peersCh)
-
-	}
 	n.peersCh = ch
 }
 

@@ -13,7 +13,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	peerAddr := netip.MustParseAddr("13.112.175.43")
+	peerAddr := netip.MustParseAddr("95.168.169.66")
 	peerPort := uint16(8333)
 
 	pool, err := network.NewNodePool(peerAddr, peerPort, 10)
