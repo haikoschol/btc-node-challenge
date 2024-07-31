@@ -111,6 +111,15 @@ func (n *Node) Run() {
 			n.write(msg)
 		case AddrCmd:
 			n.handleAddr(msg)
+		case InvCmd:
+			inv, err := decodeInvMessage(msg.Payload)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Printf("got %d items in 'inv' message:", inv.Count)
+			for _, item := range inv.Inventory {
+				log.Println(item.String())
+			}
 		}
 	}
 }
@@ -154,33 +163,18 @@ func (n *Node) handleAddr(msg *Message) {
 		return
 	}
 
-	varIntSize := 1
-	var addrCount uint64
-	switch msg.Payload[0] {
-	case 0xFD:
-		varIntSize = 3
-		addrCount = uint64(binary.LittleEndian.Uint16(msg.Payload[1:varIntSize]))
-	case 0xFE:
-		varIntSize = 5
-		addrCount = uint64(binary.LittleEndian.Uint32(msg.Payload[1:varIntSize]))
-	case 0xFF:
-		varIntSize = 9
-		addrCount = binary.LittleEndian.Uint64(msg.Payload[1:varIntSize])
-	default:
-		addrCount = uint64(msg.Payload[0])
-	}
+	addrCount, ok := decodeVarInt(msg.Payload)
+	addrPayloadSize := uint64(len(msg.Payload) - addrCount.Size)
 
-	addrPayloadSize := uint64(len(msg.Payload) - varIntSize)
-
-	if addrPayloadSize/netAddrSize != addrCount || addrPayloadSize%netAddrSize != 0 {
+	if !ok || addrPayloadSize/netAddrSize != addrCount.Value || addrPayloadSize%netAddrSize != 0 {
 		log.Printf("received corrupt '%s' payload from %s. ignoring message", msg.Command(), n.peer())
 		return
 	}
 
-	buf := bytes.NewBuffer(msg.Payload[varIntSize:])
-	peers := make([]NetAddr, addrCount)
+	buf := bytes.NewBuffer(msg.Payload[addrCount.Size:])
+	peers := make([]NetAddr, addrCount.Value)
 
-	for i := 0; i < min(int(addrCount), maxPeerCount); i++ {
+	for i := 0; i < min(int(addrCount.Value), maxPeerCount); i++ {
 		peers[i] = decodeNetAddr(buf)
 	}
 

@@ -11,6 +11,7 @@ var (
 	PongCmd    = Command{'p', 'o', 'n', 'g', 0, 0, 0, 0, 0, 0, 0, 0}
 	GetaddrCmd = Command{'g', 'e', 't', 'a', 'd', 'd', 'r', 0, 0, 0, 0, 0}
 	AddrCmd    = Command{'a', 'd', 'd', 'r', 0, 0, 0, 0, 0, 0, 0, 0}
+	InvCmd     = Command{'i', 'n', 'v', 0, 0, 0, 0, 0, 0, 0, 0, 0}
 )
 
 func (c Command) String() string {
