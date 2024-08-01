@@ -17,7 +17,7 @@ func main() {
 	peerAddr := netip.MustParseAddr("95.168.169.66")
 	peerPort := uint16(8333)
 
-	pool, err := network.NewNodePool(peerAddr, peerPort, 10)
+	pool, err := network.NewNodePool(peerAddr, peerPort, 5) // 10)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/haikoschol/btc-node-challenge/internal/btc"
+	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
 )
 
 type ObjectType uint32
@@ -50,11 +52,16 @@ const invVecSize = 36
 
 type InvVec struct {
 	Type ObjectType
-	Hash [32]byte
+	Hash btc.BlockHash
 }
 
 func (v *InvVec) String() string {
 	return fmt.Sprintf("type=%s hash=%s", v.Type, hex.EncodeToString(v.Hash[:]))
+}
+
+type InvWithSource struct {
+	Inventory []InvVec
+	Node      *Node
 }
 
 type InvMessage struct {
@@ -63,7 +70,7 @@ type InvMessage struct {
 }
 
 func decodeInvMessage(data []byte) (*InvMessage, error) {
-	count, ok := decodeVarInt(data)
+	count, ok := vartypes.DecodeVarInt(data)
 	if !ok {
 		return nil, ErrInvalidInvMessage
 	}

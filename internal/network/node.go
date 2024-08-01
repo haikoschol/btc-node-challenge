@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/haikoschol/btc-node-challenge/internal/btc"
+	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -29,6 +32,8 @@ type Node struct {
 	services     Services
 	lock         sync.Mutex
 	peersCh      chan []NetAddr
+	invCh        chan InvWithSource
+	blockCh      chan *btc.Block
 	stopWritesCh chan bool
 	msgWriteCh   chan *Message
 	shuttingDown int32
@@ -80,6 +85,8 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 		services:     services,
 		lock:         sync.Mutex{},
 		peersCh:      nil,
+		invCh:        nil,
+		blockCh:      nil,
 		stopWritesCh: make(chan bool, 1),
 		msgWriteCh:   make(chan *Message, 5),
 		shuttingDown: 0,
@@ -103,23 +110,18 @@ func (n *Node) Run() {
 			n.disconnect(fmt.Errorf("closing connection to %s. reading message failed: %w", n.peer(), err))
 			return
 		}
-		log.Printf("received [%s] from %s", msg.Header.String(), n.peer())
+		//log.Printf("received [%s] from %s", msg.Header.String(), n.peer())
 
 		switch msg.Header.Command {
 		case PingCmd:
 			msg.Header.Command = PongCmd
 			n.write(msg)
 		case AddrCmd:
-			n.handleAddr(msg)
+			n.handleAddrMessage(msg)
 		case InvCmd:
-			inv, err := decodeInvMessage(msg.Payload)
-			if err != nil {
-				log.Println(err)
-			}
-			log.Printf("got %d items in 'inv' message:", inv.Count)
-			for _, item := range inv.Inventory {
-				log.Println(item.String())
-			}
+			n.handleInvMessage(msg)
+		case BlockCmd:
+			n.handleBlockMessage(msg)
 		}
 	}
 }
@@ -130,6 +132,46 @@ func (n *Node) Run() {
 func (n *Node) FindPeers(peersCh chan []NetAddr) {
 	n.setPeersCh(peersCh)
 	n.write(GetaddrMessage)
+}
+
+// GetInventory sets the channel on which the content of 'inv' messages should be sent.
+func (n *Node) GetInventory(invCh chan InvWithSource) {
+	n.invCh = invCh
+}
+
+// GetBlocks requests the blocks with the hashes in the given inventory vector from the connected host. All blocks
+// received by the node, not just those requested in the call, will be sent over the given channel.
+func (n *Node) GetBlocks(inventory []InvVec, ch chan *btc.Block) error {
+	n.blockCh = ch
+	buf := new(bytes.Buffer)
+
+	err := vartypes.WriteAsVarInt(buf, uint64(len(inventory)))
+	if err != nil {
+		return err
+	}
+
+	for _, item := range inventory {
+		err = binary.Write(buf, binary.LittleEndian, item.Type)
+		if err != nil {
+			return err
+		}
+
+		written, err := buf.Write(item.Hash[:])
+		if err != nil {
+			return err
+		}
+		if written != len(item.Hash) {
+			return io.ErrShortWrite
+		}
+	}
+
+	payload := Payload(buf.Bytes())
+	msg := &Message{
+		Header:  NewHeader(GetdataCmd, payload),
+		Payload: payload,
+	}
+	n.write(msg)
+	return nil
 }
 
 func (n *Node) processWrites() {
@@ -147,7 +189,7 @@ func (n *Node) processWrites() {
 				)
 				return
 			}
-			log.Printf("sent [%s] to %s", msg.Header.String(), n.peer())
+			//log.Printf("sent [%s] to %s", msg.Header.String(), n.peer())
 		case <-n.stopWritesCh:
 			return
 		}
@@ -158,13 +200,13 @@ func (n *Node) write(msg *Message) {
 	n.msgWriteCh <- msg
 }
 
-func (n *Node) handleAddr(msg *Message) {
+func (n *Node) handleAddrMessage(msg *Message) {
 	if !n.hasPeersCh() {
 		return
 	}
 
-	addrCount, ok := decodeVarInt(msg.Payload)
-	addrPayloadSize := uint64(len(msg.Payload) - addrCount.Size)
+	addrCount, ok := vartypes.DecodeVarInt(msg.Payload)
+	addrPayloadSize := uint64(len(msg.Payload) - int(addrCount.Size))
 
 	if !ok || addrPayloadSize/netAddrSize != addrCount.Value || addrPayloadSize%netAddrSize != 0 {
 		log.Printf("received corrupt '%s' payload from %s. ignoring message", msg.Command(), n.peer())
@@ -181,6 +223,32 @@ func (n *Node) handleAddr(msg *Message) {
 	n.peersCh <- peers
 	n.setPeersCh(nil)
 	return
+}
+
+func (n *Node) handleInvMessage(msg *Message) {
+	inv, err := decodeInvMessage(msg.Payload)
+	if err != nil {
+		log.Println(n.peer(), err)
+	} else {
+		if n.invCh != nil {
+			// This blocks if the channel is full. Should it be done in a new goroutine?
+			n.invCh <- InvWithSource{Inventory: inv.Inventory, Node: n}
+		}
+	}
+}
+
+func (n *Node) handleBlockMessage(msg *Message) {
+	if n.blockCh == nil {
+		return
+	}
+
+	block, err := btc.DecodeBlock(msg.Payload)
+	if err != nil {
+		log.Printf("received invalid block from %s: %v", n.peer(), err)
+		return
+	}
+
+	n.blockCh <- block
 }
 
 func (n *Node) disconnect(err error) {
