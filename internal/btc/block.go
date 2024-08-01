@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
 	"io"
-	"log"
 )
 
 type Block struct {
@@ -54,17 +53,15 @@ func (b *Block) Encode() ([]byte, error) {
 }
 
 func DecodeBlock(data []byte) (*Block, error) {
-	header, err := DecodeHeader(data)
+	buf := bytes.NewBuffer(data)
+	header, err := DecodeHeader(buf)
 	if err != nil {
 		return nil, err
 	}
-	data = data[header.Size():]
 
 	txns := make([]Transaction, header.TxnCount.Value)
 	for i := 0; uint64(i) < header.TxnCount.Value; i++ {
-		hash, _ := header.Hash()
-		log.Printf("decoding tx %d in block %s", i, hash.String())
-		txn, err := DecodeTransaction(data)
+		txn, err := DecodeTransaction(buf)
 		if err != nil {
 			return nil, err
 		}

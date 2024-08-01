@@ -7,12 +7,12 @@ import (
 	"errors"
 	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
 	"io"
-	"log"
 )
 
 var ErrInvalidTransaction = errors.New("invalid transaction")
 var ErrInvalidTxInput = errors.New("invalid tx input")
 var ErrInvalidTxOutput = errors.New("invalid tx output")
+var ErrInvalidTxWitnesses = errors.New("invalid tx witnesses")
 
 type TxHash [32]byte
 
@@ -21,10 +21,12 @@ func (h TxHash) String() string {
 }
 
 type Transaction struct {
-	Version  uint32
-	TxIn     []TxInput
-	TxOut    []TxOutput
-	LockTime uint32
+	Version      uint32
+	HasWitnesses bool
+	TxIn         []TxInput
+	TxOut        []TxOutput
+	TxWitnesses  []TxWitness
+	LockTime     uint32
 }
 
 type TxInput struct {
@@ -41,6 +43,15 @@ type TxOutput struct {
 type OutPoint struct {
 	Hash  TxHash
 	Index uint32
+}
+
+type TxWitness struct {
+	ComponentData []byte
+}
+
+type TxWitnesses struct {
+	Witnesses []TxWitness
+	Size      uint64
 }
 
 func (tx *Transaction) Encode() ([]byte, error) {
@@ -95,88 +106,80 @@ func (tx *Transaction) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func DecodeTransaction(data []byte) (*Transaction, error) {
-	if len(data) < 4 {
-		return nil, ErrInvalidTransaction
-	}
-
-	tx := new(Transaction)
-	tx.Version = binary.LittleEndian.Uint32(data)
-
-	data = data[4:]
-	if len(data) < 1 {
-		return nil, ErrInvalidTransaction
-	}
-
-	numInputs, ok := vartypes.DecodeVarInt(data)
-	if !ok {
+func DecodeTransaction(buf *bytes.Buffer) (*Transaction, error) {
+	if buf.Len() < 4 {
 		return nil, ErrInvalidTransaction
 	}
 
 	var err error
+	tx := new(Transaction)
+	tx.Version = binary.LittleEndian.Uint32(buf.Next(4))
+
+	tx.HasWitnesses, err = decodeWitnessFlag(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	numInputs, ok := vartypes.DecodeVarInt(buf)
+	if !ok {
+		return nil, ErrInvalidTransaction
+	}
+
 	tx.TxIn = make([]TxInput, numInputs.Value)
 	for i := uint64(0); i < numInputs.Value; i++ {
-		tx.TxIn[i], err = DecodeTxInput(data)
+		tx.TxIn[i], err = DecodeTxInput(buf)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	numOutputs, ok := vartypes.DecodeVarInt(data)
+	numOutputs, ok := vartypes.DecodeVarInt(buf)
 	if !ok {
 		return nil, ErrInvalidTransaction
 	}
 
 	tx.TxOut = make([]TxOutput, numOutputs.Value)
 	for i := uint64(0); i < numOutputs.Value; i++ {
-		tx.TxOut[i], err = DecodeTxOutput(data)
+		tx.TxOut[i], err = DecodeTxOutput(buf)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if len(data) < 4 {
+	if tx.HasWitnesses {
+		tx.TxWitnesses, err = decodeTxWitnesses(buf)
+	}
+
+	if buf.Len() < 4 {
 		return nil, ErrInvalidTransaction
 	}
-	tx.LockTime = binary.LittleEndian.Uint32(data)
+
+	tx.LockTime = binary.LittleEndian.Uint32(buf.Next(4))
 	return tx, nil
 }
 
-func DecodeTxInput(data []byte) (in TxInput, err error) {
-	if len(data) < 40 {
-		log.Println("tx input too short")
+func DecodeTxInput(buf *bytes.Buffer) (in TxInput, err error) {
+	if buf.Len() < 40 {
 		return in, ErrInvalidTxInput
 	}
 
-	buf := bytes.NewBuffer(data)
-	read, err := io.ReadFull(buf, in.PreviousOutput.Hash[:])
-	if err != nil {
-		log.Println("previous output hash bad")
+	if _, err = io.ReadFull(buf, in.PreviousOutput.Hash[:]); err != nil {
 		return
 	}
 
-	log.Println("previous output hash read", read)
 	in.PreviousOutput.Index = binary.LittleEndian.Uint32(buf.Next(4))
-	log.Println("previous output index", in.PreviousOutput.Index)
-	data = buf.Bytes()
-	scriptLen, ok := vartypes.DecodeVarInt(data)
+	scriptLen, ok := vartypes.DecodeVarInt(buf)
 	if !ok {
-		log.Println("script len bad")
-		return in, ErrInvalidTxInput
-	}
-	log.Println("script len", scriptLen.Value)
-
-	data = data[scriptLen.Size:]
-	if uint64(len(data)) < scriptLen.Value+uint64(4) {
-		log.Println("script bad")
 		return in, ErrInvalidTxInput
 	}
 
-	buf = bytes.NewBuffer(data)
+	if uint64(buf.Len()) < scriptLen.Value+uint64(4) {
+		return in, ErrInvalidTxInput
+	}
+
 	in.SignatureScript = buf.Next(int(scriptLen.Value)) // TODO check overflow
 
 	if buf.Len() < 4 {
-		log.Println("rest of the damn owl bad")
 		return in, ErrInvalidTxInput
 	}
 	in.Sequence = binary.LittleEndian.Uint32(buf.Next(4))
@@ -218,27 +221,25 @@ func (i TxInput) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func DecodeTxOutput(data []byte) (out TxOutput, err error) {
-	if len(data) < 9 {
+func DecodeTxOutput(buf *bytes.Buffer) (out TxOutput, err error) {
+	if buf.Len() < 9 {
 		return out, ErrInvalidTxOutput
 	}
 
-	err = binary.Read(bytes.NewReader(data[:4]), binary.LittleEndian, &out.Value)
+	err = binary.Read(buf, binary.LittleEndian, &out.Value)
 	if err != nil {
 		return
 	}
 
-	data = data[4:]
-	spkLen, ok := vartypes.DecodeVarInt(data)
+	spkLen, ok := vartypes.DecodeVarInt(buf)
 	if !ok {
 		return out, ErrInvalidTxOutput
 	}
-	data = data[:spkLen.Size]
 
-	if uint64(len(data)) < spkLen.Value {
+	if uint64(buf.Len()) < spkLen.Value {
 		return out, ErrInvalidTxOutput
 	}
-	out.ScriptPubKey = data
+	out.ScriptPubKey = buf.Next(int(spkLen.Value))
 	return
 }
 
@@ -263,4 +264,35 @@ func (i TxOutput) Encode() ([]byte, error) {
 		return nil, io.ErrShortWrite
 	}
 	return buf.Bytes(), nil
+}
+
+func decodeTxWitnesses(buf *bytes.Buffer) (w []TxWitness, err error) {
+	count, ok := vartypes.DecodeVarInt(buf)
+	if !ok {
+		return w, ErrInvalidTxWitnesses
+	}
+
+	witnesses := make([]TxWitness, count.Value)
+
+	for i := uint64(0); i < count.Value; i++ {
+		l, ok := vartypes.DecodeVarInt(buf)
+		if !ok {
+			return w, ErrInvalidTxWitnesses
+		}
+
+		witnesses = append(witnesses, TxWitness{ComponentData: buf.Next(int(l.Value))})
+	}
+	return
+}
+
+func decodeWitnessFlag(buf *bytes.Buffer) (bool, error) {
+	flag := buf.Bytes()
+	if len(flag) < 2 {
+		return false, ErrInvalidTxWitnesses
+	}
+
+	if flag[0] == 0 && flag[1] == 1 {
+		return true, nil
+	}
+	return false, nil
 }

@@ -205,15 +205,15 @@ func (n *Node) handleAddrMessage(msg *Message) {
 		return
 	}
 
-	addrCount, ok := vartypes.DecodeVarInt(msg.Payload)
-	addrPayloadSize := uint64(len(msg.Payload) - int(addrCount.Size))
+	buf := bytes.NewBuffer(msg.Payload)
+	addrCount, ok := vartypes.DecodeVarInt(buf)
+	addrPayloadSize := uint64(buf.Len())
 
 	if !ok || addrPayloadSize/netAddrSize != addrCount.Value || addrPayloadSize%netAddrSize != 0 {
 		log.Printf("received corrupt '%s' payload from %s. ignoring message", msg.Command(), n.peer())
 		return
 	}
 
-	buf := bytes.NewBuffer(msg.Payload[addrCount.Size:])
 	peers := make([]NetAddr, addrCount.Value)
 
 	for i := 0; i < min(int(addrCount.Value), maxPeerCount); i++ {

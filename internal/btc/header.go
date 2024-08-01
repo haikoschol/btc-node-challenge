@@ -11,8 +11,9 @@ import (
 )
 
 const staticHeaderSize = 80
+const BlockHashSize = 32
 
-type BlockHash [32]byte
+type BlockHash [BlockHashSize]byte
 
 func (h BlockHash) String() string {
 	return hex.EncodeToString(h[:])
@@ -32,8 +33,7 @@ func (h *Header) Size() int {
 	return staticHeaderSize + int(h.TxnCount.Size)
 }
 
-func DecodeHeader(data []byte) (*Header, error) {
-	buf := bytes.NewBuffer(data)
+func DecodeHeader(buf *bytes.Buffer) (*Header, error) {
 	header := new(Header)
 	header.Version = int32(binary.LittleEndian.Uint32(buf.Next(4))) // TODO check overflow
 
@@ -50,7 +50,7 @@ func DecodeHeader(data []byte) (*Header, error) {
 	header.Nonce = binary.LittleEndian.Uint32(buf.Next(4))
 
 	var ok bool
-	header.TxnCount, ok = vartypes.DecodeVarInt(buf.Bytes())
+	header.TxnCount, ok = vartypes.DecodeVarInt(buf)
 	if !ok {
 		return nil, errors.New("invalid txn count")
 	}

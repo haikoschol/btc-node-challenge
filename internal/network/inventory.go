@@ -70,26 +70,24 @@ type InvMessage struct {
 }
 
 func decodeInvMessage(data []byte) (*InvMessage, error) {
-	count, ok := vartypes.DecodeVarInt(data)
+	buf := bytes.NewBuffer(data)
+	count, ok := vartypes.DecodeVarInt(buf)
 	if !ok {
 		return nil, ErrInvalidInvMessage
 	}
 
-	invVecPart := data[count.Size:]
-	netSize := uint64(len(invVecPart))
+	netSize := uint64(buf.Len())
 
 	if netSize/invVecSize != count.Value || netSize%invVecSize != 0 {
 		return nil, ErrInvalidInvMessage
 	}
 
 	inventory := make([]InvVec, count.Value)
-	r := bytes.NewReader(invVecPart)
 
 	for i := 0; uint64(i) < count.Value; i++ {
 		var vec InvVec
-		if err := binary.Read(r, binary.LittleEndian, &vec); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidInvMessage, err)
-		}
+		vec.Type = ObjectType(binary.LittleEndian.Uint32(buf.Next(4)))
+		vec.Hash = btc.BlockHash(buf.Next(btc.BlockHashSize))
 		inventory[i] = vec
 	}
 

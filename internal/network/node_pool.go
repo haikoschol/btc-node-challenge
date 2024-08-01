@@ -154,7 +154,6 @@ func (p *NodePool) handleInventory(inv InvWithSource) {
 	}
 
 	if len(request) == 0 {
-		log.Printf("found no interesting items in inventory from %s", inv.Node.peer())
 		return
 	}
 
@@ -167,37 +166,77 @@ func (p *NodePool) handleInventory(inv InvWithSource) {
 func (p *NodePool) handleBlock(block *btc.Block) {
 	hash, err := block.Hash()
 	if err != nil {
-		log.Println("handleBlock(): unhashable block is unhashable", err)
+		log.Println("unhashable block is unhashable", err)
+		return
+	}
+
+	if p.blockHashes.Contains(hash) {
 		return
 	}
 
 	log.Println("received block", hash.String())
 	p.blockHashes.Add(hash)
 	p.blocks = append(p.blocks, block)
-	p.sortAndCheckBlocks()
+	missing := p.checkChain()
+	log.Printf("requesting %d missing blocks", len(missing))
+	p.requestBlocks(missing)
+	log.Printf("got %d blocks in total so far", len(p.blocks))
 }
 
-func (p *NodePool) sortAndCheckBlocks() {
+func (p *NodePool) checkChain() (missing []btc.BlockHash) {
+	// oldest block first
 	sort.Sort(btc.BlocksByTimestamp(p.blocks))
-	prev := p.blocks[0]
+	zeroHash := btc.BlockHash{}
 
-	for i := 1; i < len(p.blocks)-1; i++ {
+	for i := len(p.blocks) - 1; i > 0; i-- {
 		current := p.blocks[i]
+		prev := p.blocks[i-1]
 		prevHash, err := prev.Hash()
 		if err != nil {
-			log.Println("sortAndCheckBlocks(): unhashable header is unhashable", err)
+			log.Println("unhashable header is unhashable", err)
 			return
 		}
 
 		if current.Header.PrevBlock != prevHash {
 			currentHash, err := current.Hash()
 			if err != nil {
-				log.Println("sortAndCheckBlocks(): unhashable header is unhashable", err)
+				log.Println("unhashable header is unhashable", err)
 				return
 			}
-			log.Printf("gap between blocks %s and %s", currentHash, prevHash)
+			log.Printf(
+				"gap between blocks %s (timestamp: %d) and %s (timestamp: %d)",
+				currentHash,
+				current.Header.Timestamp,
+				prevHash,
+				prev.Header.Timestamp,
+			)
+			missing = append(missing, current.Header.PrevBlock)
+		}
+
+		if i == 1 && prev.Header.PrevBlock != zeroHash && !p.blockHashes.Contains(prev.Header.PrevBlock) {
+			missing = append(missing, prev.Header.PrevBlock)
 		}
 	}
+	return
+}
+
+func (p *NodePool) requestBlocks(hashes []btc.BlockHash) {
+	invs := make([]InvVec, len(hashes))
+	for i, hash := range hashes {
+		invs[i] = InvVec{
+			Type: MsgBlock,
+			Hash: hash,
+		}
+	}
+
+	// maybe a bit aggressive to request the block from all connected nodes
+	p.nodes.Each(func(n *Node) bool {
+		err := n.GetBlocks(invs, p.blockCh)
+		if err != nil {
+			log.Printf("requesting %d block(s) from %s failed: %v", len(invs), n.peer(), err)
+		}
+		return false
+	})
 }
 
 func (p *NodePool) addPeerAddrs(addrs []NetAddr) {

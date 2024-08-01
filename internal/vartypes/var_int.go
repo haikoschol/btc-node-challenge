@@ -1,6 +1,7 @@
 package vartypes
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 )
@@ -54,33 +55,38 @@ func (v VarInt) Encode() []byte {
 	return e
 }
 
-func DecodeVarInt(data []byte) (res VarInt, ok bool) {
-	if len(data) == 0 {
+func DecodeVarInt(buf *bytes.Buffer) (res VarInt, ok bool) {
+	if buf.Len() == 0 {
 		return
 	}
-	res.Size = Uint8Size
 
-	switch data[0] {
+	res.Size = Uint8Size
+	b, err := buf.ReadByte()
+	if err != nil {
+		return
+	}
+
+	switch b {
 	case 0xFD:
 		res.Size = Uint16Size
-		if len(data) < int(res.Size)+1 {
+		if buf.Len() < int(res.Size) {
 			return
 		}
-		res.Value = uint64(binary.LittleEndian.Uint16(data[1:res.Size]))
+		res.Value = uint64(binary.LittleEndian.Uint16(buf.Next(int(res.Size - 1))))
 	case 0xFE:
-		if len(data) < int(res.Size)+1 {
+		if buf.Len() < int(res.Size) {
 			return
 		}
 		res.Size = Uint32Size
-		res.Value = uint64(binary.LittleEndian.Uint32(data[1:res.Size]))
+		res.Value = uint64(binary.LittleEndian.Uint32(buf.Next(int(res.Size - 1))))
 	case 0xFF:
-		if len(data) < int(res.Size)+1 {
+		if buf.Len() < int(res.Size) {
 			return
 		}
 		res.Size = Uint64Size
-		res.Value = binary.LittleEndian.Uint64(data[1:res.Size])
+		res.Value = binary.LittleEndian.Uint64(buf.Next(int(res.Size - 1)))
 	default:
-		res.Value = uint64(data[0])
+		res.Value = uint64(b)
 	}
 
 	return res, true
