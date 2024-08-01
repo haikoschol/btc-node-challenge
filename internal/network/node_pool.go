@@ -177,6 +177,8 @@ func (p *NodePool) handleBlock(block *btc.Block) {
 	log.Println("received block", hash.String())
 	p.blockHashes.Add(hash)
 	p.blocks = append(p.blocks, block)
+
+	// TODO requesting n blocks as soon as one block is received is way too aggressive
 	missing := p.checkChain()
 	log.Printf("requesting %d missing blocks", len(missing))
 	p.requestBlocks(missing)
@@ -229,13 +231,13 @@ func (p *NodePool) requestBlocks(hashes []btc.BlockHash) {
 		}
 	}
 
-	// maybe a bit aggressive to request the block from all connected nodes
 	p.nodes.Each(func(n *Node) bool {
 		err := n.GetBlocks(invs, p.blockCh)
 		if err != nil {
 			log.Printf("requesting %d block(s) from %s failed: %v", len(invs), n.peer(), err)
+			return false
 		}
-		return false
+		return true
 	})
 }
 
