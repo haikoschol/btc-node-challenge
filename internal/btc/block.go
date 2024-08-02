@@ -52,8 +52,7 @@ func (b *Block) Encode() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func DecodeBlock(data []byte) (*Block, error) {
-	buf := bytes.NewBuffer(data)
+func DecodeBlock(buf *bytes.Buffer) (*Block, error) {
 	header, err := DecodeHeader(buf)
 	if err != nil {
 		return nil, err

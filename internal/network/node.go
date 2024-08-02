@@ -242,7 +242,7 @@ func (n *Node) handleBlockMessage(msg *Message) {
 		return
 	}
 
-	block, err := btc.DecodeBlock(msg.Payload)
+	block, err := btc.DecodeBlock(bytes.NewBuffer(msg.Payload))
 	if err != nil {
 		log.Printf("received invalid block from %s: %v", n.peer(), err)
 		return

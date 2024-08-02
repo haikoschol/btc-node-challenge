@@ -1,11 +1,17 @@
 package network
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	mapset "github.com/deckarep/golang-set/v2"
 	"github.com/haikoschol/btc-node-challenge/internal/btc"
+	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
+	"io"
 	"log"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -15,6 +21,7 @@ const maxPeerAge = time.Hour * 24 * 10
 
 type NodePool struct {
 	minConnections int
+	statePath      string
 	addrsCh        chan []NetAddr
 	invCh          chan InvWithSource
 	blockCh        chan *btc.Block
@@ -27,7 +34,12 @@ type NodePool struct {
 	errorCh        chan error
 }
 
-func NewNodePool(addr netip.Addr, port uint16, minConnections int) (*NodePool, error) {
+func NewNodePool(addr netip.Addr, port uint16, minConnections int, statePath string) (*NodePool, error) {
+	blocks, blockHashes, err := loadState(statePath)
+	if err != nil {
+		return nil, err
+	}
+
 	node, err := Connect(addr, port, Network)
 	if err != nil {
 		return nil, err
@@ -38,14 +50,15 @@ func NewNodePool(addr netip.Addr, port uint16, minConnections int) (*NodePool, e
 
 	pool := &NodePool{
 		minConnections: minConnections,
+		statePath:      statePath,
 		addrsCh:        make(chan []NetAddr, 1),
 		invCh:          make(chan InvWithSource, minConnections), // TODO figure out what the size should be
 		blockCh:        make(chan *btc.Block, 100),               // TODO figure out what the size should be
 		getAddrPending: false,
 		peerAddrs:      mapset.NewSet[NetAddr](),
 		nodes:          nodes,
-		blockHashes:    mapset.NewSet[btc.BlockHash](),
-		blocks:         make([]*btc.Block, 0),
+		blockHashes:    blockHashes,
+		blocks:         blocks,
 		shutdownCh:     make(chan bool, 1),
 		errorCh:        make(chan error, 1),
 	}
@@ -80,6 +93,10 @@ func (p *NodePool) Shutdown() {
 		n.Disconnect()
 		return false
 	})
+
+	if err := p.writeState(); err != nil {
+		log.Printf("failed writing state to %s: %v", p.statePath, err)
+	}
 }
 
 func (p *NodePool) Error() chan error {
@@ -180,7 +197,10 @@ func (p *NodePool) handleBlock(block *btc.Block) {
 
 	// TODO requesting n blocks as soon as one block is received is way too aggressive
 	missing := p.checkChain()
-	log.Printf("requesting %d missing blocks", len(missing))
+	if len(missing) > 0 {
+		missing = missing[:1]
+	}
+	log.Printf("requesting %d missing block(s)", len(missing))
 	p.requestBlocks(missing)
 	log.Printf("got %d blocks in total so far", len(p.blocks))
 }
@@ -188,7 +208,7 @@ func (p *NodePool) handleBlock(block *btc.Block) {
 func (p *NodePool) checkChain() (missing []btc.BlockHash) {
 	// oldest block first
 	sort.Sort(btc.BlocksByTimestamp(p.blocks))
-	zeroHash := btc.BlockHash{}
+	//zeroHash := btc.BlockHash{}
 
 	for i := len(p.blocks) - 1; i > 0; i-- {
 		current := p.blocks[i]
@@ -199,25 +219,33 @@ func (p *NodePool) checkChain() (missing []btc.BlockHash) {
 			return
 		}
 
+		currentHash, err := current.Hash()
+		if err != nil {
+			log.Println("unhashable header is unhashable", err)
+			return
+		}
 		if current.Header.PrevBlock != prevHash {
-			currentHash, err := current.Hash()
-			if err != nil {
-				log.Println("unhashable header is unhashable", err)
-				return
-			}
 			log.Printf(
 				"gap between blocks %s (timestamp: %d) and %s (timestamp: %d)",
-				currentHash,
-				current.Header.Timestamp,
 				prevHash,
 				prev.Header.Timestamp,
+				currentHash,
+				current.Header.Timestamp,
 			)
 			missing = append(missing, current.Header.PrevBlock)
+		} else {
+			log.Printf(
+				"consecutive blocks found. parent: %s (timestamp: %d) child: %s (timestamp: %d)",
+				prevHash,
+				prev.Header.Timestamp,
+				currentHash,
+				current.Header.Timestamp,
+			)
 		}
 
-		if i == 1 && prev.Header.PrevBlock != zeroHash && !p.blockHashes.Contains(prev.Header.PrevBlock) {
-			missing = append(missing, prev.Header.PrevBlock)
-		}
+		//if i == 1 && prev.Header.PrevBlock != zeroHash && !p.blockHashes.Contains(prev.Header.PrevBlock) {
+		//	missing = append(missing, prev.Header.PrevBlock)
+		//}
 	}
 	return
 }
@@ -328,4 +356,86 @@ func (p *NodePool) isShuttingDown() bool {
 	default:
 		return false
 	}
+}
+
+func (p *NodePool) writeState() error {
+	if len(p.blocks) == 0 {
+		return nil
+	}
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(p.statePath), "state.*.bin")
+	if err != nil {
+		return err
+	}
+	defer tmpFile.Close()
+
+	count := vartypes.NewVarInt(uint64(len(p.blocks)))
+	written, err := tmpFile.Write(count.Encode())
+	if err != nil {
+		return err
+	}
+	if written != int(count.Size) {
+		return io.ErrShortWrite
+	}
+
+	for _, block := range p.blocks {
+		encoded, err := block.Encode()
+		if err != nil {
+			return err
+		}
+
+		written, err = tmpFile.Write(encoded)
+		if err != nil {
+			return err
+		}
+		if written != len(encoded) {
+			return io.ErrShortWrite
+		}
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpFile.Name(), p.statePath)
+}
+
+func loadState(statePath string) ([]*btc.Block, mapset.Set[btc.BlockHash], error) {
+	hashes := mapset.NewSet[btc.BlockHash]()
+
+	file, err := os.Open(statePath)
+	if os.IsNotExist(err) {
+		return []*btc.Block{}, hashes, nil
+	} else if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	buf := bytes.NewBuffer(data)
+	count, ok := vartypes.DecodeVarInt(buf)
+	if !ok {
+		return nil, nil, fmt.Errorf("failed to decode block count at start of state file at %s", statePath)
+	}
+
+	blocks := make([]*btc.Block, count.Value)
+	for i := 0; i < int(count.Value); i++ {
+		block, err := btc.DecodeBlock(buf)
+		if err != nil {
+			return nil, nil, err
+		}
+		blocks[i] = block
+
+		hash, err := block.Hash()
+		if err != nil {
+			return nil, nil, fmt.Errorf("corrupt block data in state file at %s", statePath)
+		}
+		hashes.Add(hash)
+	}
+
+	return blocks, hashes, nil
 }
