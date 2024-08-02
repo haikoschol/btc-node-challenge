@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/haikoschol/btc-node-challenge/internal/btc"
+	"github.com/haikoschol/btc-node-challenge/internal/vartypes"
+	"io"
 	"log"
 	"math"
 	"net"
@@ -29,6 +32,8 @@ type Node struct {
 	services     Services
 	lock         sync.Mutex
 	peersCh      chan []NetAddr
+	invCh        chan InvWithSource
+	blockCh      chan *btc.Block
 	stopWritesCh chan bool
 	msgWriteCh   chan *Message
 	shuttingDown int32
@@ -80,6 +85,8 @@ func Connect(addr netip.Addr, port uint16, requestedServices Services) (*Node, e
 		services:     services,
 		lock:         sync.Mutex{},
 		peersCh:      nil,
+		invCh:        nil,
+		blockCh:      nil,
 		stopWritesCh: make(chan bool, 1),
 		msgWriteCh:   make(chan *Message, 5),
 		shuttingDown: 0,
@@ -103,14 +110,18 @@ func (n *Node) Run() {
 			n.disconnect(fmt.Errorf("closing connection to %s. reading message failed: %w", n.peer(), err))
 			return
 		}
-		log.Printf("received [%s] from %s", msg.Header.String(), n.peer())
+		//log.Printf("received [%s] from %s", msg.Header.String(), n.peer())
 
 		switch msg.Header.Command {
 		case PingCmd:
 			msg.Header.Command = PongCmd
 			n.write(msg)
 		case AddrCmd:
-			n.handleAddr(msg)
+			n.handleAddrMessage(msg)
+		case InvCmd:
+			n.handleInvMessage(msg)
+		case BlockCmd:
+			n.handleBlockMessage(msg)
 		}
 	}
 }
@@ -121,6 +132,46 @@ func (n *Node) Run() {
 func (n *Node) FindPeers(peersCh chan []NetAddr) {
 	n.setPeersCh(peersCh)
 	n.write(GetaddrMessage)
+}
+
+// GetInventory sets the channel on which the content of 'inv' messages should be sent.
+func (n *Node) GetInventory(invCh chan InvWithSource) {
+	n.invCh = invCh
+}
+
+// GetBlocks requests the blocks with the hashes in the given inventory vector from the connected host. All blocks
+// received by the node, not just those requested in the call, will be sent over the given channel.
+func (n *Node) GetBlocks(inventory []InvVec, ch chan *btc.Block) error {
+	n.blockCh = ch
+	buf := new(bytes.Buffer)
+
+	err := vartypes.WriteAsVarInt(buf, uint64(len(inventory)))
+	if err != nil {
+		return err
+	}
+
+	for _, item := range inventory {
+		err = binary.Write(buf, binary.LittleEndian, item.Type)
+		if err != nil {
+			return err
+		}
+
+		written, err := buf.Write(item.Hash[:])
+		if err != nil {
+			return err
+		}
+		if written != len(item.Hash) {
+			return io.ErrShortWrite
+		}
+	}
+
+	payload := Payload(buf.Bytes())
+	msg := &Message{
+		Header:  NewHeader(GetdataCmd, payload),
+		Payload: payload,
+	}
+	n.write(msg)
+	return nil
 }
 
 func (n *Node) processWrites() {
@@ -138,7 +189,7 @@ func (n *Node) processWrites() {
 				)
 				return
 			}
-			log.Printf("sent [%s] to %s", msg.Header.String(), n.peer())
+			//log.Printf("sent [%s] to %s", msg.Header.String(), n.peer())
 		case <-n.stopWritesCh:
 			return
 		}
@@ -149,44 +200,55 @@ func (n *Node) write(msg *Message) {
 	n.msgWriteCh <- msg
 }
 
-func (n *Node) handleAddr(msg *Message) {
+func (n *Node) handleAddrMessage(msg *Message) {
 	if !n.hasPeersCh() {
 		return
 	}
 
-	varIntSize := 1
-	var addrCount uint64
-	switch msg.Payload[0] {
-	case 0xFD:
-		varIntSize = 3
-		addrCount = uint64(binary.LittleEndian.Uint16(msg.Payload[1:varIntSize]))
-	case 0xFE:
-		varIntSize = 5
-		addrCount = uint64(binary.LittleEndian.Uint32(msg.Payload[1:varIntSize]))
-	case 0xFF:
-		varIntSize = 9
-		addrCount = binary.LittleEndian.Uint64(msg.Payload[1:varIntSize])
-	default:
-		addrCount = uint64(msg.Payload[0])
-	}
+	buf := bytes.NewBuffer(msg.Payload)
+	addrCount, ok := vartypes.DecodeVarInt(buf)
+	addrPayloadSize := uint64(buf.Len())
 
-	addrPayloadSize := uint64(len(msg.Payload) - varIntSize)
-
-	if addrPayloadSize/netAddrSize != addrCount || addrPayloadSize%netAddrSize != 0 {
+	if !ok || addrPayloadSize/netAddrSize != addrCount.Value || addrPayloadSize%netAddrSize != 0 {
 		log.Printf("received corrupt '%s' payload from %s. ignoring message", msg.Command(), n.peer())
 		return
 	}
 
-	buf := bytes.NewBuffer(msg.Payload[varIntSize:])
-	peers := make([]NetAddr, addrCount)
+	peers := make([]NetAddr, addrCount.Value)
 
-	for i := 0; i < min(int(addrCount), maxPeerCount); i++ {
+	for i := 0; i < min(int(addrCount.Value), maxPeerCount); i++ {
 		peers[i] = decodeNetAddr(buf)
 	}
 
 	n.peersCh <- peers
 	n.setPeersCh(nil)
 	return
+}
+
+func (n *Node) handleInvMessage(msg *Message) {
+	inv, err := decodeInvMessage(msg.Payload)
+	if err != nil {
+		log.Println(n.peer(), err)
+	} else {
+		if n.invCh != nil {
+			// This blocks if the channel is full. Should it be done in a new goroutine?
+			n.invCh <- InvWithSource{Inventory: inv.Inventory, Node: n}
+		}
+	}
+}
+
+func (n *Node) handleBlockMessage(msg *Message) {
+	if n.blockCh == nil {
+		return
+	}
+
+	block, err := btc.DecodeBlock(bytes.NewBuffer(msg.Payload))
+	if err != nil {
+		log.Printf("received invalid block from %s: %v", n.peer(), err)
+		return
+	}
+
+	n.blockCh <- block
 }
 
 func (n *Node) disconnect(err error) {

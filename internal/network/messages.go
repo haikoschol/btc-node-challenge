@@ -37,7 +37,6 @@ var (
 	ErrInvalidHeader       = errors.New("invalid header")
 	ErrInvalidChecksum     = errors.New("invalid checksum")
 	ErrUnexpectedMessage   = errors.New("received unexpected message")
-	ErrCorruptPayload      = errors.New("corrupt payload")
 	ErrInvalidPeerVersion  = errors.New("invalid peer version")
 	ErrServicesUnavailable = errors.New("requested services unavailable")
 )
