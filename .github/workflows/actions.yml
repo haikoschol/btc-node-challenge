@@ -12,16 +12,18 @@ jobs:
         with:
           go-version-input: '1.22.5'
 
-  gosec:
-    runs-on: ubuntu-latest
-    name: Run Gosec
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v3
-      - name: Run Gosec Security Scanner
-        uses: securego/gosec@master
-        with:
-          args: ./...
+# Gosec does not support 1.22.5 yet:
+# https://github.com/securego/gosec/issues/1166
+#  gosec:
+#    runs-on: ubuntu-latest
+#    name: Run Gosec
+#    steps:
+#      - name: Checkout Source
+#        uses: actions/checkout@v4
+#      - name: Run Gosec Security Scanner
+#        uses: securego/gosec@master
+#        with:
+#          args: ./...
 
   test:
     runs-on: ubuntu-latest
