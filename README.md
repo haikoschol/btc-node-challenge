@@ -1,5 +1,18 @@
 BTC Node Challenge
 
+This repository contains an implementation of the first three milestones of the challenge described below.
+You can build the code with `make build` (or just `go build`) and run it with `./btc-node-challenge`. Tests can be run
+with `make test`.
+
+On launch, the program connects to a hard-coded node taken from https://bitnodes.io, performs a protocol handshake and
+sends an `getaddr` message to it to discover more peers. It then connects to some of them, trying to maintain at least
+ten connections.
+
+The program processes `inv` messages received from the connected nodes and requests blocks contained in those messages.
+Received blocks are decoded and stored in memory, ordered by timestamp. Gaps between blocks in that list are filled by
+requesting the missing blocks. On graceful shutdown, the program writes the collected blocks to a file called
+`state.bin`, which is loaded on subsequent executions.
+
 ##### Requirements:
 - The implementation should compile at least on linux
 - The solution cannot use existing P2P libraries
